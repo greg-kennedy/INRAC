@@ -59,16 +59,6 @@ sub _match
   1;
 }
 
-# Prunes a list of items to just wildcard matches
-sub _glob
-{
-  my $pattern = shift;
-
-  my @matches;
-  map { push @matches, $_ if _match($pattern, $_) } @_;
-  @matches;
-}
-
 # Return a list containing the indexes of the start point of each word
 sub _word_points
 {
@@ -166,7 +156,7 @@ sub _call_glob
     confess "Attempt to peek unknown section $1" unless exists $self->{script}{$1};
 
     # Use glob to find matches for labels
-    my @labels = _glob($2, keys %{$self->{script}{$1}{label}});
+    my @labels = grep { _match($2, $_) } keys %{$self->{script}{$1}{label}};
     confess "No matches to label $2 in section $1" unless @labels;
 
     # choose a line from selected label and return
@@ -262,7 +252,7 @@ sub _read_data_file
         # Labels stored here which point to Lines above.
         push(@{$self->{script}{$sec->{number}}{label}{$opcodes[0]}}, $pushed_line_num - 1);
       }
-      _d('>> Section ' . $sec->{number} . ": Processed " . scalar @{$self->{script}{$sec->{number}}{line}} . " lines, " . scalar(keys %{$self->{script}{$sec->{number}}{label}}) . " label.");
+      _d('>> Section ' . $sec->{number} . ": Processed " . scalar @{$self->{script}{$sec->{number}}{line}} . " lines, " . scalar(keys %{$self->{script}{$sec->{number}}{label}}) . " distinct labels.");
     }
   } else {
     confess "Failed opening datafile $datafile: $!\n";
@@ -296,6 +286,7 @@ sub _decode
 
     # Call helper function to set up index ptrs to words
     #$self->{input_words} = _word_points($self->{variable}[1]);
+    @{$self->{input_line}} = split /\s+/, $self->{variable}[1];
 
     # reset output before continuing
     $self->{output} = '';
@@ -418,13 +409,13 @@ sub _decode
 
       for my $i (0 .. @{$self->{input_line}} - 1)
       {
-#        if (exists $search_items{_norm($self->{input_line}[$i])})
-#        {
-#          # It is a match.
-#          $self->{input_opcode} = $i;
-#          $result = 1;
-#          last;
-#        }
+        if (exists $search_items{_norm($self->{input_line}[$i])})
+        {
+          # It is a match.
+          $self->{input_opcode} = $i;
+          $result = 1;
+          last;
+        }
       }
       # confess "Malformed TEST-command $firstchar (full cmd: '$command')";
     }

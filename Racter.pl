@@ -100,7 +100,7 @@ $racter = new INRAC( { file => 'data/IV.RAC',
                        callback_put => \&put,
                        callback_load => \&load,
                        callback_out => \&out,
-			debug => 1 } );
+                       debug => 1 } );
 
 # run until script is over
 $racter->run;
