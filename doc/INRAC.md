@@ -66,27 +66,12 @@ Each line of a code section begins with some letter opcodes.
     `:F=E` - As a special case of F=n above, F=E will move the pointer to the last word in the sentence.
     `:F+n` - Advance F by n words, advancing past the end sets the pointer to the last word
     `:F-n` - Backtrack F by n words, going beyond the first word will simply set F=0.
-  `>` - Functions to set the internal variable array.
-    # SET IV: sets an internal variable
-    if ($rest =~ m/(\d+)([*=])(.*)/) {
-      my $right = $3;
-      if ($2 eq '*') {
-        # random call - 
-     die "unimp";
-        $right = $self->_expand('*' . $3);
-      }
-      my @rhs = split /,/, $right;
-      my $val = '';
-
-      while (my $mod = pop @rhs)
-      {
-        if ($mod eq 'F') { $val = _get_word($self->_get_var(1),$self->{input_ptr}); }
-        elsif ($mod =~ m/^\d+$/) { $val = $self->_get_var($mod); }
-        elsif ($mod eq 'R') { $val = _get_rest($self->_get_var(1),$self->{input_ptr} + 1); }
-        elsif ($mod eq 'C') { $val = ucfirst($val); }
-        else { $val .= $mod; } #confess "Unknown modifier $mod in SET-command (full cmd: '$command')"; }
-      }
-      # set final var
-      $self->{variable}[$1] = $val;
+  `>n` - Functions to set the internal variable array.  Sets a value for slot n in the array based on the following...
+    `*` - Call a subroutine and ... ???
+    `=` - Set nth item to a value
+      `=F` - Copy the word pointed to by F into this variable slot
+      `=xx` - Copy variable slot xx into n
+      `=R` - Copy all words after F into this variable
+      `=C` - Uppercase the first letter of the string in n, and store back to itself
 
 If none of these opcodes are hit, the word is just a piece of embedded (literal) text, and is passed as-is to the output string builder.

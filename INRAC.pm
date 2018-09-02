@@ -41,6 +41,7 @@ sub _eat
 # Checks if item 1 matches item 2
 #  item 1 matches if shorter than 2
 #  also, ? is a wildcard in item 1
+# TODO: add & for * wildcard
 sub _match
 {
   my $pattern = shift;
@@ -60,6 +61,7 @@ sub _match
 }
 
 # Return a list containing the indexes of the start point of each word
+=pod This function seemed unnecsesary
 sub _word_points
 {
   my $sentence = shift;
@@ -83,12 +85,17 @@ sub _word_points
 
   return @word_starts;
 }
+=cut
 
 sub _get_word
 {
   my $sentence = shift;
   my $word_num = shift;
 
+  my @words = split /\s+/, $sentence;
+  return $words[$word_num];
+
+=pod Skipping this for now, it's way more work than needed
   # skip N words
   my $word = '';
 
@@ -113,6 +120,7 @@ sub _get_word
   }
 
   return $word;
+=cut
 }
 
 sub _get_rest
@@ -120,9 +128,13 @@ sub _get_rest
   my $sentence = shift;
   my $word_num = shift;
 
+  my @words = split /\s+/, $sentence;
+  return join(' ', @words[$word_num .. $#words]);
+
+=pod More overkill parsing - the above is not really correct but should work OK
   my $current_word = 0;
   my $prev_char_ws = 1;
-  for my $i (0 .. length $sentence - 1)
+  for my $i (0 .. length($sentence) - 1)
   {
     # save character
     my $char = substr $sentence,$i,1;
@@ -140,6 +152,7 @@ sub _get_rest
   }
 
   return '';
+=cut
 }
 
 ##########################################################
@@ -286,7 +299,7 @@ sub _decode
 
     # Call helper function to set up index ptrs to words
     #$self->{input_words} = _word_points($self->{variable}[1]);
-    @{$self->{input_line}} = split /\s+/, $self->{variable}[1];
+    @{$self->{input_words}} = split /\s+/, $self->{variable}[1];
 
     # reset output before continuing
     $self->{output} = '';
@@ -376,9 +389,9 @@ sub _decode
     } elsif ( $rest =~ m/^([A-Z]+)([+-])?(\d)?/ ) {
       # Special test functions.
       if ($1 eq 'CAP') {
-        my $f = $self->_get_word($self->_get_var(1),$self->{input_ptr});
+        my $f = _get_word($self->_get_var(1),$self->{input_ptr});
 #_d("Special case $1: ($f eq " . ucfirst($f) . "): " . ($f eq ucfirst($f)));
-        #$result = ($f eq ucfirst($f));
+        $result = ($f eq ucfirst($f));
       } elsif ($1 eq 'Q') {
         $result = ($self->{input} =~ m/\?$/);
       } elsif ($1 eq 'PUNC') {
@@ -392,27 +405,29 @@ sub _decode
       #  current opcode.  If found, set the condition code, and advance
       #  opcode ptr.
 
-      for my $term (split /,/, $rest)
-      {
-        my $pos = index(lc($self->_get_var(1)),$term);
-        if ($pos >= 0)
-        {
-          $self->{input_ptr} = $pos;
-          $result = 1;
-          last;
-        }
-      }
+      #for my $term (split /,/, $rest)
+      #{
+        #my $pos = index(lc($self->_get_var(1)),$term);
+        #if ($pos >= 0)
+        #{
+          #$self->{input_ptr} = $pos;
+          #$result = 1;
+          #last;
+        #}
+      #}
 
-      # Put search terms into a hash for faster lookup
-      my %search_items;
-      @search_items{split /,/, $rest} = ();
+# TODO: this is broken because of input_var(1) should be used everywhere instead of special-casing input_words etc
+      my @search_items = split /,/, $rest;
 
-      for my $i (0 .. @{$self->{input_line}} - 1)
+      my @searchable_words = split /\s+/, $self->_get_var(1);
+      for my $i (0 .. scalar @searchable_words)
       {
-        if (exists $search_items{_norm($self->{input_line}[$i])})
+        my $input_word = _norm($searchable_words[$i]);
+
+        if (grep {$input_word eq $_} @search_items)
         {
           # It is a match.
-          $self->{input_opcode} = $i;
+          $self->{input_ptr} = $i;
           $result = 1;
           last;
         }
@@ -420,7 +435,8 @@ sub _decode
       # confess "Malformed TEST-command $firstchar (full cmd: '$command')";
     }
     $self->{condition} = ($result xor $invert);
-  #####################################
+say "(conditional result: $self->{condition}";
+  ####################################
   # FLOW CONTROL
   } elsif ($firstchar eq '*') {
     # GOSUB
@@ -549,7 +565,7 @@ sub new
     condition => 0,
     # Index to char in variable1 (user input)
     input_ptr => 0,
-    #input_words => [],
+    input_words => [],
     # Output buffer
     output => '',
   );
