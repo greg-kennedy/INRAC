@@ -53,25 +53,25 @@ There is a Condition flag which can be set / cleared using some Test functions. 
 ## CODE SECTIONS
 Each line of a code section begins with some letter opcodes.
 
-`$xx` - Recall a variable from internal memory.  Memory is an array of 100 strings, which can be stored to or read from.
-`??` - Get user input.  This triggers the interpreter to read a line of text from the user, and store it into internal memory (variable #1)
-`%aaa` - Load an additional script file aaa.rac.  The initial Racter file is small, but additional sections can be loaded from disk as needed.
-`:` - Call interpreter function.  These hooks invoke special functions provided by the interpreter, typically for file access or similar.
-  `:ZAP` - Clear internal variable memory
-  `:LOADaaa` - Load variable memory from file named "aaa.iv"
-  `:PUTaaa` - Save variable memory to file named "aaa.iv"
-  `:OUTaaa` - Open "aaa.out" and record a copy of all I/O to it
-  `:F` - Manipulate the F word-pointer.
-    `:F=n` - Set F to point at the nth word, e.g. F=0 points to the beginning of the string, F=1 to the second word, etc
-    `:F=E` - As a special case of F=n above, F=E will move the pointer to the last word in the sentence.
-    `:F+n` - Advance F by n words, advancing past the end sets the pointer to the last word
-    `:F-n` - Backtrack F by n words, going beyond the first word will simply set F=0.
-  `>n` - Functions to set the internal variable array.  Sets a value for slot n in the array based on the following...
-    `*` - Call a subroutine and ... ???
-    `=` - Set nth item to a value
-      `=F` - Copy the word pointed to by F into this variable slot
-      `=xx` - Copy variable slot xx into n
-      `=R` - Copy all words after F into this variable
-      `=C` - Uppercase the first letter of the string in n, and store back to itself
+* `$xx` - Recall a variable from internal memory.  Memory is an array of 100 strings, which can be stored to or read from.
+* `??` - Get user input.  This triggers the interpreter to read a line of text from the user, and store it into internal memory (variable #1)
+* `%aaa` - Load an additional script file aaa.rac.  The initial Racter file is small, but additional sections can be loaded from disk as needed.
+* `:` - Call interpreter function.  These hooks invoke special functions provided by the interpreter, typically for file access or similar.
+  * `:ZAP` - Clear internal variable memory
+  * `:LOADaaa` - Load variable memory from file named "aaa.iv"
+  * `:PUTaaa` - Save variable memory to file named "aaa.iv"
+  * `:OUTaaa` - Open "aaa.out" and record a copy of all I/O to it
+  * `:F` - Manipulate the F word-pointer.
+    * `:F=n` - Set F to point at the nth word, e.g. F=0 points to the beginning of the string, F=1 to the second word, etc
+    * `:F=E` - As a special case of F=n above, F=E will move the pointer to the last word in the sentence.
+    * `:F+n` - Advance F by n words, advancing past the end sets the pointer to the last word
+    * `:F-n` - Backtrack F by n words, going beyond the first word will simply set F=0.
+  * `>n` - Functions to set the internal variable array.  Sets a value for slot n in the array based on the following...
+    * `*` - Call a subroutine and ... ???
+    * `=` - Set nth item to a value
+      * `=F` - Copy the word pointed to by F into this variable slot
+      * `=xx` - Copy variable slot xx into n
+      * `=R` - Copy all words after F into this variable
+      * `=C` - Uppercase the first letter of the string in n, and store back to itself
 
 If none of these opcodes are hit, the word is just a piece of embedded (literal) text, and is passed as-is to the output string builder.
