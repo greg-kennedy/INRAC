@@ -46,7 +46,7 @@ Each line of a code section begins with some letter opcodes.
 * `??` - Get user input.  This triggers the interpreter to read a line of text from the user, and store it into internal memory (variable #1)
 * `%aaa` - Load an additional script file aaa.rac.  The initial Racter file is small, but additional sections can be loaded from disk as needed.
 * `:` - Call interpreter function.  These hooks invoke special functions provided by the interpreter, typically for file access or similar.
-  * `:ZAP` - Clear internal variable memory
+  * `:ZAP` - Clear internal variable memory, elements 10 onwards.  In other words, preserve elements 1 through 9 inclusive.
   * `:LOADaaa` - Load variable memory from file named "aaa.iv"
   * `:PUTaaa` - Save variable memory to file named "aaa.iv"
   * `:OUTaaa` - Open "aaa.out" and record a copy of all I/O to it
@@ -71,7 +71,13 @@ Each line of a code section begins with some letter opcodes.
 
 If none of these opcodes are hit, the word is just a piece of embedded (literal) text, and is passed as-is to the output string builder.
 
-Words are usually separated by a space, except where a token ends with `>` or the next begins with `<`.
+### OUTPUT FORMATTING
+INRAC contains a number of tokens for managing output presentation.
+
+* `C` - Causes the first character of the next word to be Capitalized
+* `D` - Causes the first character of the next word to be DE-Capitalized (unless it would be the word "I")
+* `aaa>` - Do not include a trailing space after this substring
+* `<aaa` - Do not insert whitespace before this substring
 
 Punctuation is usually separated by a double space.
 
@@ -90,8 +96,10 @@ Data files begin with a header of the following, one per line:
 * Total count of lines across all sections
 
 Section definitions follow:
-* Section title, comment, or description - can be ignored by the interpreter
-* Number - unknown, assumed type
+* Section title, comment, or description
+  * If the section header contains `ALPH`, it has (unknown) special meaning.
+  * If the section header contains `UNIQ`, it has a different (unknown) special meaning.
+* Number - unknown, assumed to be "section type"
 * Number of lines in section
 
 After section definitions, all lines of code follow.  Here is an example data file with two sections, 7 lines of code.  Section 1 begins at label A, section 2 at label B.  (An X is typically used for a dummy label)

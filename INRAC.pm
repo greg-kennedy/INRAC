@@ -1,8 +1,10 @@
 ##########################################################
 # INRAC brain, object implementation.
 package INRAC;
-#use v5.012;
+# TODO: eliminate version dependency
+use v5.010;
 use warnings;
+use strict;
 
 use autodie;
 
@@ -17,113 +19,111 @@ use Data::Dumper;
 my $debug = 0;
 
 # Debug print when module-wide debug enabled
-sub _d { print STDERR @_ if $debug }
+sub _d { print STDERR @_, "\n" if $debug }
 
 ##########################################################
 # STATIC HELPER FUNCTIONS
 # Choose one item at random from a list
+
+# TODO: use and store RNG state from parent object
 sub _pick { return $_[rand @_] }
 
 # normalizes a substring (remove punct, lowercase)
+# TODO: verify this is the correct patterns
 sub _norm
 {
-	my $str = shift // '';
-	$str =~ s/[^A-Za-z0-9']//g;
-	return lc($str);
-}
-
-# Safe-ish line read plus chomp
-sub _eat
-{
-	my $fh = shift;
-	confess "Short read on filehandle!" unless defined(my $line = <$fh>);
-	$line =~ s/[\r\n]+$//g;
-	return $line;
+  my $str = shift // '';
+  $str =~ s/[^A-Za-z0-9']//g;
+  return lc($str);
 }
 
 # Checks if item 1 matches item 2
 #  item 1 matches if shorter than 2
 #  also, ? is a wildcard in item 1
 # TODO: add & for * wildcard
+# TODO: test
 sub _match
 {
-	my $pattern = shift;
-	my $item = shift;
+  my $pattern = shift;
+  my $item = shift;
 
-	my $pat_len = length $pattern;
-	return 0 if length $item < $pat_len;
+  my $pat_len = length $pattern;
+  return 0 if length $item < $pat_len;
 
-	for my $i ( 0 .. $pat_len - 1 )
-	{
-		my $char = substr($pattern, $i, 1);
-		next if $char eq '?';
-		return 0 if $char ne substr($item, $i, 1);
-	}
+  for my $i ( 0 .. $pat_len - 1 )
+  {
+    my $char = substr($pattern, $i, 1);
+    next if $char eq '?';
+    return 0 if $char ne substr($item, $i, 1);
+  }
 
-	return 1;
+  return 1;
 }
 
+# TODO: Split words at set-time instead
 sub _get_word
 {
-	my $sentence = shift;
-	my $word_num = shift;
+  my $sentence = shift;
+  my $word_num = shift;
 
-	my @words = split /\s+/, $sentence;
-	return ($words[$word_num] // '');
+  my @words = split /\s+/, $sentence;
+  return ($words[$word_num] // '');
 }
 
+# TODO: like _get_word above
 sub _get_rest
 {
-	my $sentence = shift;
-	my $word_num = shift;
+  my $sentence = shift;
+  my $word_num = shift;
 
-	my @words = split /\s+/, $sentence;
-#say "get_rest called with $sentence, $word_num: result " . join(' ', @words[$word_num .. $#words]);
+  my @words = split /\s+/, $sentence;
 
-	return join(' ', @words[$word_num .. $#words]);
+  return join(' ', @words[$word_num .. $#words]);
 }
 
 ##########################################################
 # MEMBER FUNCTIONS
 
 # Lookup and return frame pointing to random sub
+# TODO: validate
 sub _call_glob
 {
-	my $self = shift;
-	my $pattern = shift;
+  my $self = shift;
+  my $pattern = shift;
 
-	if ($pattern =~ m/^(\d+)(\D+)$/)
-	{
-		confess "Attempt to peek unknown section $1" unless $self->{code}[$1];
+  if ($pattern =~ m/^(\d+)(\D+)$/)
+  {
+    confess "Attempt to peek unknown section $1" unless $self->{code}[$1];
 
 # Use glob to find matches for labels
-		my @labels = grep { _match($2, $_) } keys %{$self->{code}[$1]{label}};
-		confess "No matches to label $2 in section $1" unless @labels;
+    my @labels = grep { _match($2, $_) } keys %{$self->{code}[$1]{label}};
+    confess "No matches to label $2 in section $1" unless @labels;
 
 # choose a line from selected label and return
-		return { section => $1, line => _pick(@{$self->{code}[$1]{label}{_pick(@labels)}}) };
-	} else {
-		confess "Pattern $pattern found no matches.";
-	}
+    return { section => $1, line => _pick(@{$self->{code}[$1]{label}{_pick(@labels)}}) };
+  } else {
+    confess "Pattern $pattern found no matches.";
+  }
 }
 
+# TODO: unimplemented
 # Expand out all * from a line
 sub _expand
 {
-	my $self = shift;
+  my $self = shift;
 
-	die "Unimplemented";
+  ...;
 
 #return shift;
 
 =pod
-		my @words = split /\s/, shift;
+    my @words = split /\s/, shift;
 
-	say "pre expand: " . join('|',@words);
-	map {
-		if (substr($_,0,1) eq '*') {
-			my $target = $self->_call_glob(substr($_,1));
-			$_ = $self->_expand(@{$self->{code}[$target->{section}]{lines}[$target->{line}]});
+  say "pre expand: " . join('|',@words);
+  map {
+    if (substr($_,0,1) eq '*') {
+      my $target = $self->_call_glob(substr($_,1));
+      $_ = $self->_expand(@{$self->{code}[$target->{section}]{lines}[$target->{line}]});
     }
   } @words;
 say "post expand: " . join('|',@words);
@@ -138,75 +138,88 @@ sub _read_data_file
   my $self = shift;
   my $datafile = shift;
 
-  _d(colored("OPENING $datafile...\n", 'bold green'));
-  if (open my $fh, '<:crlf', $datafile)
+  # Safe-ish line read plus trim
+  my $_eat = sub {
+    my $fh = shift;
+    confess "Short read on filehandle!" unless defined(my $line = <$fh>);
+    $line =~ s/^\s+//g;
+    $line =~ s/\s+$//g;
+    return $line;
+  };
+
+  _d(colored("OPENING $datafile...", 'bold green'));
+  open my $fh, '<:crlf', $datafile;
+
+  # Read header lines
+  my $file_header = $_eat->($fh);
+  my $file_sec_start = $_eat->($fh) + 0;
+  my $file_sec_count = $_eat->($fh) + 0;
+  my $file_line_count = $_eat->($fh) + 0;
+
+  _d("> HEADER: '$file_header', $file_line_count lines, $file_sec_count sect (begin $file_sec_start)");
+
+  # Read section definitions
+  my @sec_defs;
+  for my $section_number ($file_sec_start .. $file_sec_start + $file_sec_count - 1)
   {
-    # Read header lines
-    my $file_header = _eat($fh);
-    my $file_sec_start = _eat($fh) + 0;
-    my $file_sec_count = _eat($fh) + 0;
-    my $file_line_count = _eat($fh) + 0;
+    my $section_header = $_eat->($fh);
+    # TODO: determine meaning of "type" value
+    my $section_type = $_eat->($fh) + 0;
+    my $section_line_count = $_eat->($fh) + 0;
 
-    _d("> HEADER: '$file_header', $file_line_count lines, $file_sec_count sect (begin $file_sec_start)\n");
+    # TODO: the meaning of ALPH and UNIQ in section header is unknown
+    my $is_alph = ($section_header =~ m/ALPH/);
+    my $is_uniq = ($section_header =~ m/UNIQ/);
 
-    # Read section definitions
-    my @sec_defs;
-    for my $section_number ($file_sec_start .. $file_sec_start + $file_sec_count - 1)
-    {
-      my $section_header = _eat($fh);
-      my $section_type = _eat($fh) + 0; # type
-      my $section_line_count = _eat($fh) + 0;
+    # Push section info into array.
+    push @sec_defs, {
+      header => $section_header,
+      is_alph => $is_alph,
+      is_uniq => $is_uniq,
+      number => $section_number,
+      type => $section_type,
+      line_count => $section_line_count
+    };
 
-      # Push section info into array.
-      push @sec_defs, {
-        header => $section_header,
-        number => $section_number,
-        type => $section_type,
-        line_count => $section_line_count
-      };
-
-      _d(">> SECTION $section_number: '$section_header', $section_line_count lines, $section_type type\n");
-    }
-
-    # Got our section definitions. Process lines per section.
-    foreach my $sec (@sec_defs)
-    {
-      # Check for existing section
-      #  (sometimes sections called "link" are placeholders unloaded by subsequent scripts)
-      _d(colored("Duplicate entry for " . $sec->{number} . ", overwriting\n", 'yellow')) if $self->{code}[$sec->{number}];
-
-      # store header info (for debug)
-      $self->{code}[$sec->{number}]{file_name} = $datafile;
-      $self->{code}[$sec->{number}]{file_header} = $file_header;
-      $self->{code}[$sec->{number}]{section_header} = $sec->{header};
-      $self->{code}[$sec->{number}]{type} = $sec->{type};
-
-      $self->{code}[$sec->{number}]{line} = [];
-      $self->{code}[$sec->{number}]{label} = {};
-      for (my $idx = 0; $idx < $sec->{line_count}; $idx ++)
-      {
-        my $line = _eat($fh);
-
-        # tokenize and push
-        my @tokens = split(/\s+/,$line);
-
-        # Sections contain a list of Lines (strip first Line Label off)
-        my $label = shift @tokens;
-        #  Need a pointer to previously pushed line too
-        my $pushed_line_num = push @{$self->{code}[$sec->{number}]{line}}, \@tokens;
-        # Labels stored here which point to Lines above.
-        push @{$self->{code}[$sec->{number}]{label}{$label}}, $pushed_line_num - 1;
-      }
-      _d('>> Section ' . $sec->{number} . ": Processed " . scalar @{$self->{code}[$sec->{number}]{line}} . " lines, " . scalar(keys %{$self->{code}[$sec->{number}]{label}}) . " distinct labels.\n");
-    }
-  } else {
-    confess "Failed opening datafile $datafile: $!\n";
+    #_d(">> SECTION $section_number: '$section_header', $section_line_count lines, $section_type type");
   }
 
-  return 1;
+  # Got our section definitions. Process lines per section.
+  foreach my $sec (@sec_defs)
+  {
+    # Check for existing section
+    #  (sometimes sections called "link" are placeholders unloaded by subsequent scripts)
+    #_d(colored("Duplicate entry for $sec->{number}, overwriting", 'yellow')) if $self->{code}[$sec->{number}];
+
+    # store header info (for debug)
+    $self->{code}[$sec->{number}]{file_name} = $datafile;
+    $self->{code}[$sec->{number}]{file_header} = $file_header;
+    $self->{code}[$sec->{number}]{section_header} = $sec->{header};
+    $self->{code}[$sec->{number}]{type} = $sec->{type};
+
+    $self->{code}[$sec->{number}]{line} = [];
+    $self->{code}[$sec->{number}]{label} = {};
+    for (my $idx = 0; $idx < $sec->{line_count}; $idx ++)
+    {
+      my $line = $_eat->($fh);
+
+      # tokenize and push
+      my @tokens = split(/\s+/,$line);
+
+      # Sections contain a list of Lines (strip first Line Label off)
+      my $label = shift @tokens;
+      #  Need a pointer to previously pushed line too
+      my $pushed_line_num = push @{$self->{code}[$sec->{number}]{line}}, \@tokens;
+      # Labels stored here which point to Lines above.
+      push @{$self->{code}[$sec->{number}]{label}{$label}}, $pushed_line_num - 1;
+    }
+
+    #_d(">> Section $sec->{number}: Processed " . scalar @{$self->{code}[$sec->{number}]{line}} . " lines, " . scalar(keys %{$self->{code}[$sec->{number}]{label}}) . " distinct labels.");
+  }
 }
 
 # Retrieve a variable (or '' if unset)
+# TODO: perform token expansion
 sub _get_var { return $_[0]->{variable}[$_[1]] // ''; }
 
 # Split first and rest off a token
@@ -221,7 +234,8 @@ sub _execute
 {
   my ($self, $section, $line, $depth, @code_buffer) = @_;
 
-  _d("\t" x $depth, colored("_execute(sec=$section, line=$line, buf=" . join(' ', @code_buffer) . ")\n", 'bold blue'));
+  _d("\t" x $depth,
+    colored("_execute(sec=$section, line=$line, buf=[" . join(' ', @code_buffer) . '])', 'bold blue'));
 
   while (@code_buffer)
   {
@@ -229,7 +243,7 @@ sub _execute
     my $token = shift @code_buffer;
 
     # debug
-    _d("->\t" x $depth, "$token\n");
+    _d("->\t" x $depth, $token);
 
     # process opcode here
     my ($first, $rest) = _split($token);
@@ -238,20 +252,20 @@ sub _execute
     # Conditional execution: process or skip token depending on set/unset flag
     if ($first eq '/') {
       # "Execute if condition SET"
-      if ($self->{condition}) { 
+      if ($self->{condition}) {
         ($first, $rest) = _split($rest);
-        _d("\t" x ($depth + 1), colored(" (taken)\n", 'green'));
+        _d("\t" x ($depth + 1), colored(' (taken)', 'green'));
       } else {
-        _d("\t" x ($depth + 1), colored(" (skipped)\n", 'red'));
+        _d("\t" x ($depth + 1), colored(' (skipped)', 'red'));
         next;
       }
     } elsif ($first eq '\\') {
       # "Execute if condition UNSET"
       if (!$self->{condition}) {
         ($first, $rest) = _split($rest);
-        _d("\t" x ($depth + 1), colored(" (taken)\n", 'green'));
+        _d("\t" x ($depth + 1), colored(' (taken)', 'green'));
       } else {
-        _d("\t" x ($depth + 1), colored(" (skipped)\n", 'red'));
+        _d("\t" x ($depth + 1), colored(' (skipped)', 'red'));
         next;
       }
     }
@@ -263,6 +277,7 @@ sub _execute
     if ($first eq '?' && $rest eq '?') {
       # TRIGGER USER INPUT CALLBACK
       # Read user input into var1
+      # TODO: major work around parsing user input
       $self->{variable}[1] = $self->{callback}->($self->{output});
 
       # Clean up input
@@ -288,13 +303,13 @@ sub _execute
         }
       } elsif ($rest =~ m/^PUT(.+)/) {
         # Trigger save callback, if defined.  Callback should dump all set variables to disk.
-        $self->{callback_put}->($1,$self->{variable}) if defined $self->{callback_put};
+        $self->{callback_put}->($1,@{$self->{variable}}) if defined $self->{callback_put};
       } elsif ($rest =~ m/^OUT(.+)/) {
         # Trigger log callback, if defined.  Callback should open whatever output file handles are needed.
         $self->{callback_out}->($1) if defined $self->{callback_out};
       } elsif ($rest eq 'ZAP') {
         # Erase internal data store - clears only items 10+ from variable list, so preserve 1-9.
-        @{$self->{variable}} = splice (@{$self->{variable}},1,10);
+        splice @{$self->{variable}}, 10;
       }
       #  Move input (word) opcode pointer
       elsif ($rest =~ m/^F/) {
@@ -304,7 +319,7 @@ sub _execute
         } elsif ($rest eq 'F=E') { $self->{input_ptr} = split(/\s+/, $self->_get_var(1))- 1;
         } else { confess "Unimplemented special-function '$rest'"; ... }
 
-        _d("\t" x ($depth + 1), colored(' (F=' . $self->{input_ptr} . ")\n", 'yellow'));
+        _d("\t" x ($depth + 1), colored(" (F=$self->{input_ptr})", 'yellow'));
       }
       #  Unknown.
       elsif ($rest =~ m/T/) { carp "Unknown special-function 'T', unimp"; }
@@ -320,31 +335,34 @@ sub _execute
       #$self->{output} .= ($self->_expand($self->_get_var($rest)) . ' ');
       my $val = $self->_get_var($rest);
       $self->{output} .= ($val . ' ');
-      _d("\t" x ($depth + 1), colored(" ($val)\n", 'blue'));
+      _d("\t" x ($depth + 1), colored(" ($val)", 'blue'));
     } elsif ($first eq '>') {
       # SET IV: sets an internal variable
-      if ($rest =~ m/(\d+)([*=])(.*)/) {
-        my $right = $3;
+      if ($rest =~ m/^(\d+)([*=])(.*)$/) {
+        my $right = $3 // '';
+        my $val;
         if ($2 eq '*') {
           # random call -
+          #TODO
           ...
-       #die "unimp";
           #$right = $self->_expand('*' . $3);
-        }
-        my @rhs = split /,/, $right;
-        my $val = '';
+        } else {
+          #my @rhs = split /,/, $right;
+          #my $val = '';
 
-        while (my $mod = pop @rhs)
-        {
-          if ($mod eq 'F') { $val = _get_word($self->_get_var(1),$self->{input_ptr}); }
-          elsif ($mod =~ m/^\d+$/) { $val = $self->_get_var($mod); }
-          elsif ($mod eq 'R') { $val = _get_rest($self->_get_var(1),$self->{input_ptr} + 1); }
-          elsif ($mod eq 'C') { $val = ucfirst($val); }
-          else { $val .= $mod; } #confess "Unknown modifier $mod in SET-token (full cmd: '$token')"; 
+          #while (my $mod = pop @rhs)
+          #{
+            if ($right eq 'F') { $val = _get_word($self->_get_var(1),$self->{input_ptr}); }
+            elsif ($right =~ m/^\d+$/) { $val = $self->_get_var($right); }
+            elsif ($right eq 'R') { $val = _get_rest($self->_get_var(1),$self->{input_ptr} + 1); }
+            elsif ($right eq 'C') { $val = ucfirst($val); }
+            else { $val = $right; $val =~ s/,/ /g; }
+            #confess "Unknown modifier $mod in SET-token (full cmd: '$token')";
+          #}
         }
         # set final var
         $self->{variable}[$1] = $val;
-        _d("\t" x ($depth + 1), colored(" ($1=$val)\n", 'green'));
+        _d("\t" x ($depth + 1), colored(" ($1=$val)", 'green'));
       } else { confess "Malformed SET-token $first (full cmd: '$token')"; }
     #####################################
     # CONDITION TESTING
@@ -413,9 +431,9 @@ sub _execute
       }
       $self->{condition} = ($result xor $invert);
       if ($self->{condition}) {
-        _d("\t" x ($depth + 1), colored(" (condition flag SET)\n", 'green'));
+        _d("\t" x ($depth + 1), colored(' (condition flag SET)', 'green'));
       } else {
-        _d("\t" x ($depth + 1), colored(" (condition flag UNSET)\n", 'red'));
+        _d("\t" x ($depth + 1), colored(' (condition flag UNSET)', 'red'));
       }
 
     ####################################
@@ -466,13 +484,21 @@ sub _execute
 
     #####################################
     # OUTPUT / PRINTING
+    } elsif ($token eq 'C') {
+      # Output modifier: capitalize next word
+      # TODO: need to add a mod flags struct
+    } elsif ($token eq 'D') {
+      # Output modifier: DEcapitalize next word
+      # TODO: need to add a mod flags struct
     } else {
       my $final = $token;
 
+      # TODO: whitespace altering tokens should
+      #  instead set the modifier flags
       if ($first eq '<') {
         # Delete preceding space.
         chop $self->{output};
-	$final = $rest;
+        $final = $rest;
       } elsif ($first =~ m/^[.!?,]$/) {
         # Singular punct. characters need to remove preceding space too
         chop $self->{output};
@@ -509,7 +535,7 @@ sub new
   # switch global debug flag
   $debug = $args_ref->{debug} // 0;
 
-  _d("Constructing new INRAC object: " . Dumper($args_ref) . "\n");
+  _d('Constructing new INRAC object: ' . Dumper($args_ref));
 
   my $file = $args_ref->{file} or confess "No base input file specified";
   my $callback = $args_ref->{callback} or confess "No input callback specified";
