@@ -44,7 +44,8 @@ sub input {
   print $log_handle $output, "\n";
 
   # Get user input and return from callback
-  while (1) {
+  my $ret;
+  do {
     print '>';
     my $input = <STDIN>;
     chomp($input);
@@ -109,9 +110,11 @@ sub input {
       print $log_handle '>', $input, "\n";
 
       # pass input back to module
-      return $input;
+      $ret = $input;
     }
-  }
+  } while (!$ret);
+
+  return $ret;
 }
 
 # put() called when module wants to save variables to disk
@@ -135,16 +138,18 @@ sub load {
 
   # Load variables from disk (return a list)
   my @variables;
-  open my $fh, '<:crlf', $filename;
-  while ( my $line = <$fh> ) {
-    if ( $line =~ m/^([ \d]\d) (.+)[\r\n]*$/ ) {
-      $variables[$1] = $2;
-    } else {
-      print STDERR
-        "Error in load($filename): did not understand line '$line'\n";
+  if (-e $filename) {
+    open my $fh, '<:crlf', $filename;
+    while ( my $line = <$fh> ) {
+      if ( $line =~ m/^([ \d]\d) (.+)[\r\n]*$/ ) {
+        $variables[$1] = $2;
+      } else {
+        print STDERR
+          "Error in load($filename): did not understand line '$line'\n";
+      }
     }
+    close $fh;
   }
-  close $fh;
 
   return @variables;
 }

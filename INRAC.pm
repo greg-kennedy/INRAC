@@ -1,5 +1,6 @@
-##########################################################
+##############################################################################
 # INRAC brain, object implementation.
+##############################################################################
 package INRAC;
 # TODO: eliminate version dependency
 use v5.010;
@@ -11,8 +12,9 @@ use autodie;
 use Carp;
 use File::Basename;
 
-##########################################################
+##############################################################################
 # DEBUG
+##############################################################################
 use Term::ANSIColor;
 use Data::Dumper;
 # Module-wide debug switch
@@ -21,21 +23,13 @@ my $debug = 0;
 # Debug print when module-wide debug enabled
 sub _d { print STDERR @_, "\n" if $debug }
 
-##########################################################
+##############################################################################
 # STATIC HELPER FUNCTIONS
+##############################################################################
 # Choose one item at random from a list
 
 # TODO: use and store RNG state from parent object
 sub _pick { return $_[rand @_] }
-
-# normalizes a substring (remove punct, lowercase)
-# TODO: verify this is the correct patterns
-sub _norm
-{
-  my $str = shift // '';
-  $str =~ s/[^A-Za-z0-9']//g;
-  return lc($str);
-}
 
 # Checks if item 1 matches item 2
 #  item 1 matches if shorter than 2
@@ -44,8 +38,7 @@ sub _norm
 # TODO: test
 sub _match
 {
-  my $pattern = shift;
-  my $item = shift;
+  my ($pattern, $item) = @_;
 
   my $pat_len = length $pattern;
   return 0 if length $item < $pat_len;
@@ -60,29 +53,23 @@ sub _match
   return 1;
 }
 
-# TODO: Split words at set-time instead
-sub _get_word
-{
-  my $sentence = shift;
-  my $word_num = shift;
-
-  my @words = split /\s+/, $sentence;
-  return ($words[$word_num] // '');
-}
-
-# TODO: like _get_word above
-sub _get_rest
-{
-  my $sentence = shift;
-  my $word_num = shift;
-
-  my @words = split /\s+/, $sentence;
-
-  return join(' ', @words[$word_num .. $#words]);
-}
-
-##########################################################
+##############################################################################
 # MEMBER FUNCTIONS
+##############################################################################
+
+# Retrieve a variable (or '' if unset)
+# TODO: perform token expansion ?
+sub _get_var {
+  #my $self = shift;
+  #my $token = shift;
+
+  #while ($token =~ m/\$(\d+)/) {
+    #my $value = $self->{variable}[$1] // '';
+    #$token =~ s/\$$1/$value/;
+  #}
+  #return $token;
+  return $_[0]->{variable}[$_[1]] // '';
+}
 
 # Lookup and return frame pointing to random sub
 # TODO: validate
@@ -135,8 +122,7 @@ say "post expand: " . join('|',@words);
 # Reads a data file, adds contents to self hash.
 sub _read_data_file
 {
-  my $self = shift;
-  my $datafile = shift;
+  my ($self, $datafile) = @_;
 
   # Safe-ish line read plus trim
   my $_eat = sub {
@@ -218,42 +204,61 @@ sub _read_data_file
   }
 }
 
-# Retrieve a variable (or '' if unset)
-# TODO: perform token expansion
-sub _get_var { return $_[0]->{variable}[$_[1]] // ''; }
-
-# Split first and rest off a token
-sub _split {
-  my $first = substr($_[0],0,1);
-  my $rest = (length($_[0]) > 1 ? substr($_[0],1) : '');
-  return ($first, $rest);
-}
-
 # Iteratively process until we run out of opcodes.
 sub _execute
 {
-  my ($self, $section, $line, $depth, @code_buffer) = @_;
+  my ($self, $section, $line, $depth, $exec_type, @code_buffer) = @_;
+  #my ($self, $section, $line, $depth, @code_buffer) = @_;
+
+  # Split first and rest off a token
+  my $_split = sub {
+    my $first = substr($_[0],0,1);
+    my $rest = (length($_[0]) > 1 ? substr($_[0],1) : '');
+    return ($first, $rest);
+  };
 
   _d("\t" x $depth,
-    colored("_execute(sec=$section, line=$line, buf=[" . join(' ', @code_buffer) . '])', 'bold blue'));
+    #colored("_execute(sec=$section, line=$line, buf=[" . join(' ', @code_buffer) . '])', 'bold blue'));
+    colored("_execute(sec=$section, line=$line, exec_type=$exec_type, buf=[" . join(' ', @code_buffer) . '])', 'bold blue'));
 
+  # Contains the local output of this sub.
+  #  Generally ignored, but it is useful if called with exec_type = 1
+  my $local_output = '';
+
+  # Output mods
+  # TODO: These are lost when recursing and should possibly be Global
+  my %mods = ( NO_SPACE => 1 );
+
+  #for (my $idx = 0; $idx < scalar @code_buffer; $idx ++)
   while (@code_buffer)
   {
     # Retrieve next opcode from the queue
+    #my $token = $code_buffer[$idx];
     my $token = shift @code_buffer;
 
     # debug
     _d("->\t" x $depth, $token);
 
+=pod
+    #$token = $self->_get_var($token);
+    elsif ($first eq '$')
+      # GET IV: retrieves a variable and returns its value.
+      #  TODO: Variables retrieved may contain more variables, needs actual parsing.
+      #$self->{output} .= ($self->_expand($self->_get_var($rest)) . ' ');
+      my $val = $self->_get_var($rest);
+      $self->{output} .= ($val . ' ');
+    _d("\t" x ($depth + 1), colored(" ($token)", 'blue'));
+=cut
+
     # process opcode here
-    my ($first, $rest) = _split($token);
+    my ($first, $rest) = $_split->($token);
 
     #####################################
     # Conditional execution: process or skip token depending on set/unset flag
     if ($first eq '/') {
       # "Execute if condition SET"
       if ($self->{condition}) {
-        ($first, $rest) = _split($rest);
+        ($first, $rest) = $_split->($rest);
         _d("\t" x ($depth + 1), colored(' (taken)', 'green'));
       } else {
         _d("\t" x ($depth + 1), colored(' (skipped)', 'red'));
@@ -262,7 +267,7 @@ sub _execute
     } elsif ($first eq '\\') {
       # "Execute if condition UNSET"
       if (!$self->{condition}) {
-        ($first, $rest) = _split($rest);
+        ($first, $rest) = $_split->($rest);
         _d("\t" x ($depth + 1), colored(' (taken)', 'green'));
       } else {
         _d("\t" x ($depth + 1), colored(' (skipped)', 'red'));
@@ -278,18 +283,28 @@ sub _execute
       # TRIGGER USER INPUT CALLBACK
       # Read user input into var1
       # TODO: major work around parsing user input
-      $self->{variable}[1] = $self->{callback}->($self->{output});
+      my $input = $self->{callback}->($self->{output});
+      $self->{variable}[1] = $input;
 
       # Clean up input
-      #$self->{variable}[1] =~ s/\s+/ /g;
-      #$self->{input_ptr} = 0;
+      $self->{input_words} = [];
 
-      # Call helper function to set up index ptrs to words
-      #$self->{input_words} = _word_points($self->{variable}[1]);
-      #@{$self->{input_words}} = split /\s+/, $self->{variable}[1];
+      my @words = split /\s+/, $input;
+      foreach my $word (@words)
+      {
+        if ($word =~ m/^(.+)([.,!?])$/) {
+          push @{$self->{input_words}}, $1, $2;
+        } else {
+          push @{$self->{input_words}}, $word;
+        }
+      }
+
+      $self->{input_ptr} = 0;
 
       # reset output before continuing
       $self->{output} = '';
+      %mods = ( NO_SPACE => 1 );
+
     } elsif ($first eq ':') {
       # OTHER SUPERVISOR FUNCTION
       #  File manip
@@ -316,7 +331,7 @@ sub _execute
         if ($rest =~ m/^F=(\d+)$/) { $self->{input_ptr} = $1;
         } elsif ($rest =~ m/^F\+(\d+)$/) { $self->{input_ptr} += $1;
         } elsif ($rest =~ m/^F-(\d+)$/) { $self->{input_ptr} -= $1;
-        } elsif ($rest eq 'F=E') { $self->{input_ptr} = split(/\s+/, $self->_get_var(1))- 1;
+        } elsif ($rest eq 'F=E') { $self->{input_ptr} = scalar @{$self->{input_words}}- 1;
         } else { confess "Unimplemented special-function '$rest'"; ... }
 
         _d("\t" x ($depth + 1), colored(" (F=$self->{input_ptr})", 'yellow'));
@@ -329,40 +344,62 @@ sub _execute
       $self->_read_data_file($self->{data_dir} . '/' . $rest . '.RAC');
     #####################################
     # VARIABLE MANIP
-    } elsif ($first eq '$') {
-      # GET IV: retrieves a variable and returns its value.
-      #  TODO: Variables retrieved may contain more variables, needs actual parsing.
-      #$self->{output} .= ($self->_expand($self->_get_var($rest)) . ' ');
-      my $val = $self->_get_var($rest);
-      $self->{output} .= ($val . ' ');
-      _d("\t" x ($depth + 1), colored(" ($val)", 'blue'));
     } elsif ($first eq '>') {
       # SET IV: sets an internal variable
       if ($rest =~ m/^(\d+)([*=])(.*)$/) {
+        my $dest = $1;
         my $right = $3 // '';
+
         my $val;
         if ($2 eq '*') {
           # random call -
-          #TODO
-          ...
-          #$right = $self->_expand('*' . $3);
-        } else {
-          #my @rhs = split /,/, $right;
-          #my $val = '';
+          # TODO: needs significant testing
+          my $target = $self->_call_glob($right);
 
-          #while (my $mod = pop @rhs)
-          #{
-            if ($right eq 'F') { $val = _get_word($self->_get_var(1),$self->{input_ptr}); }
-            elsif ($right =~ m/^\d+$/) { $val = $self->_get_var($right); }
-            elsif ($right eq 'R') { $val = _get_rest($self->_get_var(1),$self->{input_ptr} + 1); }
-            elsif ($right eq 'C') { $val = ucfirst($val); }
-            else { $val = $right; $val =~ s/,/ /g; }
-            #confess "Unknown modifier $mod in SET-token (full cmd: '$token')";
-          #}
+          # execute sub and STORE (no print!) result
+          $val = $self->_execute( $target->{section}, $target->{line}, $depth + 1, 1,
+            @{$self->{code}[$target->{section}]{line}[$target->{line}]}
+          );
+        } else {
+          # TODO: can this be made more clear?
+
+          # This is char-by-char parsing for assignment.
+          #  Digits found are replaced with their variable.
+          # HOWEVER, things in double-quotes are copied as-is.
+          my @rhs = split /(")/, $right;
+
+          $val = '';
+          my $in_quote = 0;
+          foreach my $piece (@rhs) {
+            if ($piece eq '"') {
+              $in_quote = !$in_quote;
+            } else {
+              if ($in_quote) {
+                # Quoted content copied verbatim!
+                $val .= $piece;
+              } else {
+                # Number to variable substitution
+                $piece =~ s/(\d+)/$self->_get_var($1)/ge;
+
+                # comma to space
+                $piece =~ s/,/ /g;
+                $val .= $piece;
+              }
+            }
+          }
+
+          # TODO: test these other functions: can they be combined?
+          if ($val eq 'F') { $val = $self->{input_words}[$self->{input_ptr}]; }
+          elsif ($val eq 'L') { $val = join(' ', @{$self->{input_words}}[0 .. ($self->{input_ptr} - 1)]); }
+          elsif ($val eq 'R') { my $end = scalar @{$self->{input_words}} - 1; $val = join(' ', @{$self->{input_words}}[($self->{input_ptr} + 1) .. $end]); }
+          #elsif ($val eq 'C') { $val = ucfirst($val); }
+          # TODO: this is meant to catch unknown tokens for now
+          elsif (length($val) == 1 && $val ne 'I') { ... }
         }
+
         # set final var
-        $self->{variable}[$1] = $val;
-        _d("\t" x ($depth + 1), colored(" ($1=$val)", 'green'));
+        _d("\t" x ($depth + 1), colored(" ($dest=$val)", 'green'));
+        $self->{variable}[$dest] = $val;
       } else { confess "Malformed SET-token $first (full cmd: '$token')"; }
     #####################################
     # CONDITION TESTING
@@ -393,14 +430,14 @@ sub _execute
         }
 
         # Get the word pointed at
-        my $f = _get_word($self->_get_var(1),$self->{input_ptr} + $offset);
+        my $f = $self->{input_words}[$self->{input_ptr}] // '';
 
         if ($1 eq 'CAP') {
           # Check if word is capitalized.
           $result = ($f eq ucfirst($f));
         } elsif ($1 eq 'PUNC') {
-          # Check if word ends in punctuation
-          $result = ($f =~ m/[.?]$/);
+          # Check if word is punctuation
+          $result = ($f =~ m/[.?!,]$/);
         } elsif ($1 eq 'Q') {
           # Check if sentence ends in a question mark
           #  This is a whole-sentence test and does not use offsets
@@ -414,10 +451,12 @@ sub _execute
         #  opcode ptr.
         my @search_items = split /,/, $rest;
 
-        my @searchable_words = split /\s+/, $self->_get_var(1);
-        for my $i (0 .. scalar @searchable_words)
+        for (my $i = 0; $i < scalar @{$self->{input_words}}; $i ++)
         {
-          my $input_word = _norm($searchable_words[$i]);
+          # normalizes a substring (remove punct, lowercase)
+          my $input_word = lc($self->{input_words}[$i]);
+          # TODO: verify this is the correct patterns
+          #$input_word =~ s/[^a-z0-9']//g;
 
           if (grep {$input_word eq $_} @search_items)
           {
@@ -443,13 +482,13 @@ sub _execute
 
       if ($rest eq '') {
         # RETURN: pop stack frame, return
-        return 1;
+        return $local_output;
       } else {
         my $target = $self->_call_glob($rest);
 
         # push a new stack frame
         # execute sub and return
-        $self->_execute( $target->{section}, $target->{line}, $depth + 1,
+        $self->_execute( $target->{section}, $target->{line}, $depth + 1, $exec_type,
           @{$self->{code}[$target->{section}]{line}[$target->{line}]}
         );
       }
@@ -486,44 +525,74 @@ sub _execute
     # OUTPUT / PRINTING
     } elsif ($token eq 'C') {
       # Output modifier: capitalize next word
-      # TODO: need to add a mod flags struct
+      $mods{TO_UPPER} = 1;
     } elsif ($token eq 'D') {
       # Output modifier: DEcapitalize next word
-      # TODO: need to add a mod flags struct
+      $mods{TO_LOWER} = 1;
     } else {
-      my $final = $token;
+      # LITERAL: apply any modifiers, and append / print
+      my $final = '';
 
-      # TODO: whitespace altering tokens should
-      #  instead set the modifier flags
+      # substitute all numbers with variable reps
+      $token =~ s/\$(\d+)/$self->_get_var($1)/ge;
+
       if ($first eq '<') {
         # Delete preceding space.
-        chop $self->{output};
-        $final = $rest;
+        $mods{NO_SPACE} = 1;
+        $token = $rest;
       } elsif ($first =~ m/^[.!?,]$/) {
         # Singular punct. characters need to remove preceding space too
-        chop $self->{output};
+        $mods{NO_SPACE} = 1;
       }
 
       # Output without trailing space if token ends with >
-      if ($final =~ m/^(.+)>$/) {
-        $final = $1;
-      } else {
+      my $skip_trailing_space;
+      if ($token =~ m/^(.+)>$/) {
+        $skip_trailing_space = 1;
+        $token = $1;
+      }
+
+      # Output leading space, unless modifier list prevents it
+      if (! $mods{NO_SPACE}) {
         $final .= ' ';
       }
 
-      # Append the substring.
-      $self->{output} .= $final;
+      # Append the substring.  Apply any mods.
+      if ($mods{TO_UPPER}) {
+        $final .= ucfirst($token);
+      } elsif ($mods{TO_LOWER} && lc($token) ne 'i') {
+        $final .= lcfirst($token);
+      } else {
+        $final .= $token;
+      }
 
       # Correct double-spacing after sentence endings
-      #  The original flushes the buffer here too
-      $self->{output} .= ' ' if $self->{output} =~ m/[.!?] $/;
+      # TODO: verify behavior of this against space-deleting tokens
+      if ($token =~ m/[.!?]$/) {
+        $final .= ' ';
+      }
+
+      # All done.  Reset the modifier hash.
+      %mods = ();
+      if ($skip_trailing_space) {
+        $mods{NO_SPACE} = 1;
+      }
+
+      #if ($exec_type) {
+        $local_output .= $final;
+      if (! $exec_type) {
+        $self->{output} .= $final;
+      }
     }
   }
+
+  return $local_output;
 }
 
 
-##########################################################
+##############################################################################
 # PUBLIC METHODS
+##############################################################################
 # Constructor
 #  (accepts one optional parameter to change the data dir)
 sub new
@@ -560,9 +629,11 @@ sub new
     variable => [],
     # Conditional result register
     condition => 0,
+
     # Index to char in variable1 (user input)
     input_ptr => 0,
-    #input_words => [],
+    input_words => [],
+
     # Output buffer
     output => '',
   }, $class;
@@ -582,7 +653,7 @@ sub run
   my ($self, $initial_script) = @_;
 
   # Execute from default starting position
-  $self->_execute( 0, 0, 0, $initial_script );
+  $self->_execute( 0, 0, 0, 0, $initial_script );
 }
 
 1;
