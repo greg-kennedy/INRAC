@@ -79,28 +79,20 @@ sub input {
       for ( my $i = 0; $i < scalar @{ $racter->{code} }; $i++ ) {
         if ( $racter->{code}[$i] ) {
           my %section = %{ $racter->{code}[$i] };
-          my %labels  = %{ $section{label} };
+          my @labels  = @{ $section{label} };
           my @lines   = @{ $section{line} };
 
           printf(
             "== %02d: [%s] (type: %d, labels: %d, lines: %d) ==\n",
             $i, $section{section_header},
             $section{type},
-            scalar keys %labels,
+            scalar @labels,
             scalar @lines
           );
           printf( "- source: [%s] (%s) -\n",
             $section{file_name}, $section{file_header} );
-          for ( my $line = 0; $line < scalar @lines; $line++ ) {
-
-            # reattach label to line
-            use List::Util qw(first);
-            foreach my $label ( keys %labels ) {
-              if ( defined first { $line == $_ } @{ $labels{$label} } ) {
-                print "\t$label\t" . join( ' ', @{ $lines[$line] } ) . "\n";
-                last;
-              }
-            }
+          for ( my $j = 0; $j < scalar @lines; $j++ ) {
+            print "\t$labels[$j]\t" . join( ' ', @{ $lines[$j] } ) . "\n";
           }
         }
       }
@@ -185,7 +177,7 @@ $racter = INRAC->new(
 );
 
 # run until script is over
-$racter->run('*1A');
+print $racter->run('*1A') . "\n";
 
 # close log handle if opened
 if ($log_handle) { close $log_handle }

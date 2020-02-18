@@ -9,7 +9,7 @@ use strict;
 
 use autodie;
 
-use Carp;
+use Carp qw(confess cluck carp);
 use File::Basename;
 
 ##############################################################################
@@ -27,27 +27,66 @@ sub _d { print STDERR @_, "\n" if $debug }
 # STATIC HELPER FUNCTIONS
 ##############################################################################
 # Choose one item at random from a list
-
 # TODO: use and store RNG state from parent object
 sub _pick { return $_[rand @_] }
+
+sub _trim { $_[0] =~ s/^\s+//g; $_[0] =~ s/\s$//g }
 
 # Checks if item 1 matches item 2
 #  item 1 matches if shorter than 2
 #  also, ? is a wildcard in item 1
-# TODO: add & for * wildcard
-# TODO: test
+#  and & is also an any-width wildcard
 sub _match
 {
-  my ($pattern, $item) = @_;
+  # TODO: TEST!!!
+  my ($pattern, $item, $ci) = @_;
 
-  my $pat_len = length $pattern;
-  return 0 if length $item < $pat_len;
+  my @p = split //, $pattern;
+  my @i = split //, $item;
 
-  for my $i ( 0 .. $pat_len - 1 )
+  while (@p)
   {
-    my $char = substr($pattern, $i, 1);
-    next if $char eq '?';
-    return 0 if $char ne substr($item, $i, 1);
+    return 0 unless @i;
+
+    if ($p[0] eq '&') {
+      # recursively try every substring of item against
+      #  the remainder of pattern for a match
+      my $sub_pattern = join('', @p[1 .. $#p]);
+
+      while (@i) {
+        return 1 if _match($sub_pattern, join('', @i), $ci);
+	# match failed, skip a letter and try again
+	shift @i;
+      }
+      return 0;
+    } elsif ($i[0] eq '&') {
+      # workaround for item ending in ampersand
+      return 1 if scalar(@i) == 1;
+
+      # as above but swap item for pattern
+      my $sub_item = join('', @i[1 .. $#i]);
+
+      while (@p) {
+        return 1 if _match(join('', @p), $sub_item, $ci);
+	# match failed, skip a letter and try again
+	shift @p;
+      }
+      return 0;
+    }
+
+    # remove the next two letters
+    my $a = shift @p;
+    my $b = shift @i;
+
+    # single-character wildcard
+    next if ($a eq '?' || $b eq '?');
+
+    # case-sensitive / case-insensitive compare
+    if ($ci) {
+      return 0 if lc($a) ne lc($b);
+    } else {
+      return 0 if $a ne $b;
+    }
   }
 
   return 1;
@@ -72,24 +111,51 @@ sub _get_var {
 }
 
 # Lookup and return frame pointing to random sub
+#  This can use wildcards, so call the match function.
 # TODO: validate
 sub _call_glob
 {
   my $self = shift;
   my $pattern = shift;
 
-  if ($pattern =~ m/^(\d+)(\D+)$/)
+  if ($pattern =~ m/^(\d+)(.*)$/)
   {
-    confess "Attempt to peek unknown section $1" unless $self->{code}[$1];
+    my ($sec, $pat) = ($1, $2);
 
-# Use glob to find matches for labels
-    my @labels = grep { _match($2, $_) } keys %{$self->{code}[$1]{label}};
-    confess "No matches to label $2 in section $1" unless @labels;
+    $pat =~ s/\((\d+)\)/uc(substr($self->_get_var($1),0,1))/ge;
 
-# choose a line from selected label and return
-    return { section => $1, line => _pick(@{$self->{code}[$1]{label}{_pick(@labels)}}) };
+    _d(colored("Pattern='$pat'...", 'yellow'));
+    confess "Attempt to peek unknown section $1" unless $self->{code}[$sec];
+
+    # Search all labels in section for matches and compile a list.
+    my @matches;
+    for (my $i = 0; $i < scalar @{$self->{code}[$sec]{label}}; $i ++)
+    {
+      if (_match($pat, $self->{code}[$sec]{label}[$i])) {
+        _d("\t" . colored("Matched '" . $self->{code}[$sec]{label}[$i] . "'", 'green'));
+        push @matches, $i;
+      #} else {
+      #  _d("\t" . colored("NOMatch '" . $self->{code}[$sec]{label}[$i] . "'", 'red'));
+      }
+    }
+
+    if (! @matches) {
+    # TODO: debug
+      cluck "No matches to label $pat in section $sec";
+      $self->{callback}->($self->{output});
+      die;
+    }
+
+    # choose a line from selected label and return
+    my $target = _pick(@matches);
+    _d(colored("Picked '" . $self->{code}[$sec]{label}[$target] . "'", 'bold green'));
+    return { section => $sec,
+      index => $target,
+      label => $self->{code}[$sec]{label}[$target],
+      line => $self->{code}[$sec]{line}[$target],
+    };
   } else {
-    confess "Pattern $pattern found no matches.";
+    carp "Malformed section pattern $pattern";
   }
 }
 
@@ -128,8 +194,7 @@ sub _read_data_file
   my $_eat = sub {
     my $fh = shift;
     confess "Short read on filehandle!" unless defined(my $line = <$fh>);
-    $line =~ s/^\s+//g;
-    $line =~ s/\s+$//g;
+    _trim($line);
     return $line;
   };
 
@@ -167,7 +232,7 @@ sub _read_data_file
       line_count => $section_line_count
     };
 
-    #_d(">> SECTION $section_number: '$section_header', $section_line_count lines, $section_type type");
+    _d(">> SECTION $section_number: '$section_header', $section_line_count lines, $section_type type");
   }
 
   # Got our section definitions. Process lines per section.
@@ -175,7 +240,7 @@ sub _read_data_file
   {
     # Check for existing section
     #  (sometimes sections called "link" are placeholders unloaded by subsequent scripts)
-    #_d(colored("Duplicate entry for $sec->{number}, overwriting", 'yellow')) if $self->{code}[$sec->{number}];
+    _d(colored("Duplicate entry for $sec->{number}, overwriting", 'yellow')) if $self->{code}[$sec->{number}];
 
     # store header info (for debug)
     $self->{code}[$sec->{number}]{file_name} = $datafile;
@@ -183,8 +248,8 @@ sub _read_data_file
     $self->{code}[$sec->{number}]{section_header} = $sec->{header};
     $self->{code}[$sec->{number}]{type} = $sec->{type};
 
+    $self->{code}[$sec->{number}]{label} = [];
     $self->{code}[$sec->{number}]{line} = [];
-    $self->{code}[$sec->{number}]{label} = {};
     for (my $idx = 0; $idx < $sec->{line_count}; $idx ++)
     {
       my $line = $_eat->($fh);
@@ -194,13 +259,11 @@ sub _read_data_file
 
       # Sections contain a list of Lines (strip first Line Label off)
       my $label = shift @tokens;
-      #  Need a pointer to previously pushed line too
-      my $pushed_line_num = push @{$self->{code}[$sec->{number}]{line}}, \@tokens;
-      # Labels stored here which point to Lines above.
-      push @{$self->{code}[$sec->{number}]{label}{$label}}, $pushed_line_num - 1;
+      push @{$self->{code}[$sec->{number}]{label}}, $label;
+      push @{$self->{code}[$sec->{number}]{line}}, \@tokens;
     }
 
-    #_d(">> Section $sec->{number}: Processed " . scalar @{$self->{code}[$sec->{number}]{line}} . " lines, " . scalar(keys %{$self->{code}[$sec->{number}]{label}}) . " distinct labels.");
+    _d(">> Section $sec->{number}: Processed " . scalar @{$self->{code}[$sec->{number}]{line}} . " lines, " . scalar @{$self->{code}[$sec->{number}]{label}} . " labels.");
   }
 }
 
@@ -238,6 +301,19 @@ sub _execute
 
     # debug
     _d("->\t" x $depth, $token);
+
+    # Perform variable expansion
+    my $orig_token = $token;
+    my $prev_token;
+    do {
+      $prev_token = $token;
+      # substitute all numbers with variable reps
+      $token =~ s/^\$(\d+)/$self->_get_var($1)/ge;
+    } while ($prev_token ne $token);
+
+    if ($token ne $orig_token) {
+      _d("\t" x ($depth + 1), colored(" ($token)", 'blue'));
+    }
 
 =pod
     #$token = $self->_get_var($token);
@@ -284,14 +360,17 @@ sub _execute
       # Read user input into var1
       # TODO: major work around parsing user input
       my $input = $self->{callback}->($self->{output});
+      _trim($input);
       $self->{variable}[1] = $input;
 
       # Clean up input
-      $self->{input_words} = [];
+      #  Remember: item 0 is "before" the words, so include empty string first
+      @{$self->{input_words}} = ( '' );
 
       my @words = split /\s+/, $input;
       foreach my $word (@words)
       {
+        # separate punctuation from words
         if ($word =~ m/^(.+)([.,!?])$/) {
           push @{$self->{input_words}}, $1, $2;
         } else {
@@ -315,6 +394,8 @@ sub _execute
           my @loaded_iv = $self->{callback_load}->($1);
           # merge - Variables set in file overwrite internal vars.
           map { $self->{variable}[$_] = $loaded_iv[$_] if defined $loaded_iv[$_] } ( 1 .. @loaded_iv - 1 );
+
+	  # TODO: recalculate input words array if item 1 was replaced
         }
       } elsif ($rest =~ m/^PUT(.+)/) {
         # Trigger save callback, if defined.  Callback should dump all set variables to disk.
@@ -325,6 +406,9 @@ sub _execute
       } elsif ($rest eq 'ZAP') {
         # Erase internal data store - clears only items 10+ from variable list, so preserve 1-9.
         splice @{$self->{variable}}, 10;
+      } elsif ($rest eq 'ZEROC') {
+        # Erase entire internal data.
+        @{$self->{variable}} = ();
       }
       #  Move input (word) opcode pointer
       elsif ($rest =~ m/^F/) {
@@ -332,7 +416,11 @@ sub _execute
         } elsif ($rest =~ m/^F\+(\d+)$/) { $self->{input_ptr} += $1;
         } elsif ($rest =~ m/^F-(\d+)$/) { $self->{input_ptr} -= $1;
         } elsif ($rest eq 'F=E') { $self->{input_ptr} = scalar @{$self->{input_words}}- 1;
+        } elsif ($rest eq 'F=E+1') { $self->{input_ptr} = scalar @{$self->{input_words}};
         } else { confess "Unimplemented special-function '$rest'"; ... }
+
+        if ($self->{input_ptr} < 0) { $self->{input_ptr} = 0; }
+        if ($self->{input_ptr} > scalar @{$self->{input_words}}) { $self->{input_ptr} = scalar @{$self->{input_words}}; }
 
         _d("\t" x ($depth + 1), colored(" (F=$self->{input_ptr})", 'yellow'));
       }
@@ -346,63 +434,75 @@ sub _execute
     # VARIABLE MANIP
     } elsif ($first eq '>') {
       # SET IV: sets an internal variable
-      if ($rest =~ m/^(\d+)([*=])(.*)$/) {
-        my $dest = $1;
+      my $dest;
+      if ($rest =~ m/^\$\$(\d+)$/) {
+        $dest = $1;
+        $self->{variable}[$dest] = $self->{variable_src}[$dest] // '';
+      } elsif ($rest =~ m/^(\d+)([*=])(.*)$/) {
+        $dest = $1;
         my $right = $3 // '';
 
         my $val;
         if ($2 eq '*') {
-          # random call -
-          # TODO: needs significant testing
+# random call -
+# TODO: needs significant testing
           my $target = $self->_call_glob($right);
 
+=pod
           # execute sub and STORE (no print!) result
           $val = $self->_execute( $target->{section}, $target->{line}, $depth + 1, 1,
             @{$self->{code}[$target->{section}]{line}[$target->{line}]}
           );
+=cut
+
+# Copy the resulting code string into this variable.
+          $self->{variable}[$dest] = join(' ', @{$target->{line}});
+          $self->{variable_src}[$dest] = $target->{label};
         } else {
-          # TODO: can this be made more clear?
+# TODO: can this be made more clear?
+          if ($right =~ m/^(\d+)$/) {
+            $self->{variable}[$dest] = $self->{variable}[$1] // '';
+            $self->{variable_src}[$dest] = $self->{variable_src}[$1];
+          } elsif ($right eq 'F') { $self->{variable}[$dest] = $self->{input_words}[$self->{input_ptr}] // ''; }
+          elsif ($right eq 'L') { $self->{variable}[$dest] = join(' ', @{$self->{input_words}}[0 .. ($self->{input_ptr} - 1)]); }
+          elsif ($right eq 'R') { my $end = scalar @{$self->{input_words}} - 1; $self->{variable}[$dest] = join(' ', @{$self->{input_words}}[($self->{input_ptr} + 1) .. $end]); }
+          else {
 
-          # This is char-by-char parsing for assignment.
-          #  Digits found are replaced with their variable.
-          # HOWEVER, things in double-quotes are copied as-is.
-          my @rhs = split /(")/, $right;
+# This is char-by-char parsing for assignment.
+#  Digits found are replaced with their variable.
+# HOWEVER, things in double-quotes are copied as-is.
+            my @rhs = split /(")/, $right;
 
-          $val = '';
-          my $in_quote = 0;
-          foreach my $piece (@rhs) {
-            if ($piece eq '"') {
-              $in_quote = !$in_quote;
-            } else {
-              if ($in_quote) {
-                # Quoted content copied verbatim!
-                $val .= $piece;
+            my $val = '';
+            my $in_quote = 0;
+            foreach my $piece (@rhs) {
+              if ($piece eq '"') {
+                $in_quote = !$in_quote;
               } else {
-                # Number to variable substitution
-                $piece =~ s/(\d+)/$self->_get_var($1)/ge;
+                if ($in_quote) {
+# Quoted content copied verbatim!
+                  $val .= $piece;
+                } else {
+# Number to variable substitution
+                  $piece =~ s/(\d+)/$self->_get_var($1)/ge;
 
-                # comma to space
-                $piece =~ s/,/ /g;
-                $val .= $piece;
+# comma to space
+                  $piece =~ s/,/ /g;
+# semicolon to nada
+                  $piece =~ s/;//g;
+                  $val .= $piece;
+                }
               }
             }
+
+# set final var
+            $self->{variable}[$dest] = $val;
           }
-
-          # TODO: test these other functions: can they be combined?
-          if ($val eq 'F') { $val = $self->{input_words}[$self->{input_ptr}]; }
-          elsif ($val eq 'L') { $val = join(' ', @{$self->{input_words}}[0 .. ($self->{input_ptr} - 1)]); }
-          elsif ($val eq 'R') { my $end = scalar @{$self->{input_words}} - 1; $val = join(' ', @{$self->{input_words}}[($self->{input_ptr} + 1) .. $end]); }
-          #elsif ($val eq 'C') { $val = ucfirst($val); }
-          # TODO: this is meant to catch unknown tokens for now
-          elsif (length($val) == 1 && $val ne 'I') { ... }
         }
-
-        # set final var
-        _d("\t" x ($depth + 1), colored(" ($dest=$val)", 'green'));
-        $self->{variable}[$dest] = $val;
       } else { confess "Malformed SET-token $first (full cmd: '$token')"; }
-    #####################################
-    # CONDITION TESTING
+      _d("\t" x ($depth + 1), colored(" ($dest=" . $self->{variable}[$dest] . ')', 'green'));
+#####################################
+# CONDITION TESTING
     } elsif ($first eq '?' && $rest ne '') {
       # ? is crazily overloaded
 
@@ -416,7 +516,32 @@ sub _execute
 
       # Perform comparisons, set result in $result
       my $result = 0;
-      if ($rest =~ m/^(\d+)=(.*)/) {
+      if ($rest =~ m/^\*(\d+)$/) {
+        # Question Star: search each word in Input for a match in vocab section.
+        #  Set condition if match and also update F.
+        my $section = $1;
+
+        WORD: for (my $i = 1; $i < scalar @{$self->{input_words}}; $i ++)
+        {
+          my $word = $self->{input_words}[$i];
+          print "Searching for $word...\n";
+          foreach my $line (@{$self->{code}[$section]{line}})
+          {
+            foreach my $line_word (@{$line}) {
+              if ($word =~ m/^$line_word$/i) {
+                $result = 1;
+                $self->{input_ptr} = $i;
+                print "MATCH!\n";
+                last WORD;
+              }
+            }
+          }
+        }
+        if (! $result) {
+          $self->{input_ptr} = scalar @{$self->{input_words}};
+              print "NO MATCH!\n";
+        }
+      } elsif ($rest =~ m/^(\d+)=(.*)/) {
         # compare register to string
         my $comp = $2 // '';
         $result = ($self->_get_var($1) eq $comp);
@@ -429,14 +554,30 @@ sub _execute
           elsif ($2 eq '-') { $offset = -$3 }
         }
 
-        # Get the word pointed at
-        my $f = $self->{input_words}[$self->{input_ptr}] // '';
-
         if ($1 eq 'CAP') {
-          # Check if word is capitalized.
-          $result = ($f eq ucfirst($f));
+          # Advance F to the next capitalized word
+          #  TODO: This has some bugs in the MS-DOS version and the behavior doesn't match.
+          #  Also find out if CAP- is a thing.
+          my $start;
+          if (defined $2 && $2 eq '+') {
+            $start = $self->{input_words} + 1;
+          } else {
+            $start = 1;
+          }
+          for (my $i = $start; $i < scalar @{$self->{input_words}}; $i ++)
+          {
+            if ($self->{input_words}[$i] =~ m/^[A-Z]/) {
+              $self->{input_ptr} = $i;
+              $result = 1;
+              last;
+            }
+          }
         } elsif ($1 eq 'PUNC') {
           # Check if word is punctuation
+
+          # Get the word pointed at
+          my $f = $self->{input_words}[$self->{input_ptr}] // '';
+
           $result = ($f =~ m/[.?!,]$/);
         } elsif ($1 eq 'Q') {
           # Check if sentence ends in a question mark
@@ -488,8 +629,8 @@ sub _execute
 
         # push a new stack frame
         # execute sub and return
-        $self->_execute( $target->{section}, $target->{line}, $depth + 1, $exec_type,
-          @{$self->{code}[$target->{section}]{line}[$target->{line}]}
+        $self->_execute( $target->{section}, $target->{index}, $depth + 1, $exec_type,
+          @{$target->{line}}
         );
       }
     } elsif ($first eq '#') {
@@ -513,10 +654,10 @@ sub _execute
         my $target = $self->_call_glob($1);
 
         $section = $target->{section};
-        $line = $target->{line};
+        $line = $target->{index};
 
         # TODO: could be error if jumping outside existing code
-        @code_buffer = @{$self->{code}[$section]{line}[$line]};
+        @code_buffer = @{$target->{line}};
       } else {
         confess "Malformed JUMP token: $rest";
       }
@@ -526,21 +667,27 @@ sub _execute
     } elsif ($token eq 'C') {
       # Output modifier: capitalize next word
       $mods{TO_UPPER} = 1;
+    } elsif ($token eq 'S') {
+      # TODO: Similar to 'C' but needs testing.
+      $mods{TO_UPPER} = 1;
     } elsif ($token eq 'D') {
       # Output modifier: DEcapitalize next word
       $mods{TO_LOWER} = 1;
+    } elsif ($token eq 'A') {
+      # Output modifier: prefix with A / An
+      $mods{PREFIX_A} = 1;
+    } elsif ($token eq 'a') {
+      # Output modifier: prefix with a / an
+      $mods{PREFIX_a} = 1;
     } else {
       # LITERAL: apply any modifiers, and append / print
       my $final = '';
-
-      # substitute all numbers with variable reps
-      $token =~ s/\$(\d+)/$self->_get_var($1)/ge;
 
       if ($first eq '<') {
         # Delete preceding space.
         $mods{NO_SPACE} = 1;
         $token = $rest;
-      } elsif ($first =~ m/^[.!?,]$/) {
+      } elsif ($first =~ m/^[.?!:;,]$/) {
         # Singular punct. characters need to remove preceding space too
         $mods{NO_SPACE} = 1;
       }
@@ -552,6 +699,22 @@ sub _execute
         $token = $1;
       }
 
+      # Apply A / An prefix
+      #  TODO: this doesn't match MS-DOS behavior of repeat "a a a a a"...
+      if ($mods{PREFIX_A}) {
+        if ($token =~ m/^[AEIOUaeiou]/) {
+          $final .= 'An';
+        } else {
+          $final .= 'A';
+        }
+      } elsif ($mods{PREFIX_a}) {
+        if ($token =~ m/^[AEIOUaeiou]/) {
+          $final .= 'an';
+        } else {
+          $final .= 'a';
+        }
+      }
+
       # Output leading space, unless modifier list prevents it
       if (! $mods{NO_SPACE}) {
         $final .= ' ';
@@ -560,7 +723,7 @@ sub _execute
       # Append the substring.  Apply any mods.
       if ($mods{TO_UPPER}) {
         $final .= ucfirst($token);
-      } elsif ($mods{TO_LOWER} && lc($token) ne 'i') {
+      } elsif ($mods{TO_LOWER}) {
         $final .= lcfirst($token);
       } else {
         $final .= $token;
@@ -630,9 +793,9 @@ sub new
     # Conditional result register
     condition => 0,
 
-    # Index to char in variable1 (user input)
+    # User input, separated by word
+    input_words => [ '' ],
     input_ptr => 0,
-    input_words => [],
 
     # Output buffer
     output => '',
@@ -654,6 +817,8 @@ sub run
 
   # Execute from default starting position
   $self->_execute( 0, 0, 0, 0, $initial_script );
+
+  return $self->{output};
 }
 
 1;
